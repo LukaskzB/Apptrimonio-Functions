@@ -1,2 +1,2 @@
 # Apptrimonio-Functions
-Funções do aplicativo Apptrimônio
+ Funções do aplicativo Apptrimônio
