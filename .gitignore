@@ -64,3 +64,5 @@ node_modules/
 
 # dotenv environment variables file
 .env
+functions/apptrimonio-email.json
+functions/apptrimonio-9844d-firebase-adminsdk-w00sp-4727d2aded.json

@@ -2,10 +2,17 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const { google } = require("googleapis");
 const nodemailer = require("nodemailer");
+const crypto = require("crypto");
 
-admin.initializeApp();
+var serviceAccount = require("./apptrimonio-9844d-firebase-adminsdk-w00sp-4727d2aded.json");
+var emailAccount = require("./apptrimonio-email.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
 
 const firestore = admin.firestore();
+const storage = admin.storage();
 
 const xpAoEscanear = 15; //xp ganho ao escanear um objeto novo
 const xpAoAdicionar = 30; //xp ganho ao adicionar um objeto com sucesso
@@ -20,17 +27,10 @@ const xpAdicionar = 810; //xp necessário pra ter a habilidade de adicionar um o
 const xpGerenciador = 6960; //xp necessário pra ter a habilidade de ser gerenciador
 
 //variáveis necessárias para enviar e-mails pela conta apptrimonio@gmail.com
-const CLIENT_ID = '410454662647-dc4tmt9mvripdtbh5cpkh8rr2q104aec.apps.googleusercontent.com';
-const CLIENT_SECRET = 'mF51HVaVzBjLn2SQhbmFNXxK';
-const REDIRECT_URI = 'https://developers.google.com/oauthplayground';
-const REFRESH_TOKEN = '1//04b_MhZ_nY06YCgYIARAAGAQSNwF-L9Irt_Lf2o_q8KKtf-Evt6UGXfKaP6jZFdXSIwsBgEpAQIwZcTHYfa9SwC6a8cj-V7a4P5M';
 
-const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-oAuth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 
 //traduções das mensagens de e-mail (posição da array: 0: INGLÊS, 1 PORTUGUÊS E 2 ESPANHOL)
 const assuntosAddAprovado = ["Apptrimônio: o seu objeto foi aprovado!", "Apptrimônio: o seu objeto foi aprovado!", "Apptrimônio: o seu objeto foi aprovado!"];
-const assuntosAddDesaprovado = ["Apptrimônio: o seu objeto foi reprovado!", "Apptrimônio: o seu objeto foi reprovado!", "Apptrimônio: o seu objeto foi reprovado!"];
 const assuntosEditAprovada = ["Apptrimônio: a sua edição foi aprovada!", "Apptrimônio: a sua edição foi aprovada!", "Apptrimônio: a sua edição foi aprovada!"];
 const assuntosEditDesaprovada = ["Apptrimônio: a sua edição foi reprovada!", "Apptrimônio: a sua edição foi reprovada!", "Apptrimônio: a sua edição foi reprovada!"];
 const assuntosReport = ["Apptrimônio: atualização sobre seu reporte.", "Apptrimônio: atualização sobre seu reporte.", "Apptrimônio: atualização sobre seu reporte."];
@@ -40,15 +40,12 @@ const assuntosRemocaoAprovada = ["Apptrimônio: a sua remoção foi aprovada!", 
 const assuntosVerificacaoEmail = ["Apptrimônio: verificação de e-mail.", "Apptrimônio: verificação de e-mail.", "Apptrimônio: verificação de e-mail."];
 
 const mensagens1 = ["É possível visualizar o QRCode e editar informações do seu objeto dentro do seu perfil no aplicativo!", "É possível visualizar o QRCode e editar informações do seu objeto dentro do seu perfil no aplicativo!", "É possível visualizar o QRCode e editar informações do seu objeto dentro do seu perfil no aplicativo!"];
-const mensagens2 = ["Caso não concorde com a análise feita pelo gerenciador, responda a este e-mail e iremos analisar novamente.", "Caso não concorde com a análise feita pelo gerenciador, responda a este e-mail e iremos analisar novamente.", "Caso não concorde com a análise feita pelo gerenciador, responda a este e-mail e iremos analisar novamente."];
 const mensagens3 = ["Para mais informações, navegue até seus objetos na aba perfil dentro do aplicativo!", "Para mais informações, navegue até seus objetos na aba perfil dentro do aplicativo!", "Para mais informações, navegue até seus objetos na aba perfil dentro do aplicativo!"];
 const mensagens4 = ["Obrigado por contribuir com o Apptrimônio!", "Obrigado por contribuir com o Apptrimônio!", "Obrigado por contribuir com o Apptrimônio!"];
 
 const titulosAddAprovado = ["O objeto que você adicionou foi aprovado com sucesso!", "O objeto que você adicionou foi aprovado com sucesso!", "O objeto que você adicionou foi aprovado com sucesso!"];
-const titulosAddAprovadoModificado = ["O objeto que você adicionou foi aprovado com modificações!", "O objeto que você adicionou foi aprovado com modificações!", "O objeto que você adicionou foi aprovado com modificações!"];
 const titulosAddDesaprovado = ["Infelizmente, o objeto que você adicionou não foi aprovado!", "Infelizmente, o objeto que você adicionou não foi aprovado!", "Infelizmente, o objeto que você adicionou não foi aprovado!"];
 const titulosEditAprovada = ["A sua edição foi aprovada!", "A sua edição foi aprovada!", "A sua edição foi aprovada!"];
-const titulosEditAprovadaModificada = ["A sua edição foi aprovada com modificações!", "A sua edição foi aprovada com modificações!", "A sua edição foi aprovada com modificações!"];
 const titulosEditDesaprovada = ["Infelizmente, a sua edição não foi aprovada!", "Infelizmente, a sua edição não foi aprovada!", "Infelizmente, a sua edição não foi aprovada!"];
 const titulosObjRemovido = ["O seu objeto foi removido por um gerenciador!", "O seu objeto foi removido por um gerenciador!", "O seu objeto foi removido por um gerenciador!"];
 const titulosObjEditado = ["O seu objeto foi editado por um gerenciador!", "O seu objeto foi editado por um gerenciador!", "O seu objeto foi editado por um gerenciador!"];
@@ -59,72 +56,100 @@ const titulosRemocaoAprovada = ["A remoção do objeto foi aprovada!", "A remoç
 
 const naoInformado = ["Não informado.", "Não informado.", "Não informado."];
 
-function userAddXp(dados) { //método que adiciona xp ao usuário e aumenta a quantidade de objetos verificados ou adicionados
-
+//adiciona xp e envia email
+async function adicionarXP(dados) {
     const uid = dados.uid;
-    const ref = firestore.collection('usuarios').doc(uid);
-    const idObjeto = dados.idObjeto;
 
-    //a acao pode ser escanear (quando um usuário escaneia um qrcode)
-    //pode ser adicionar (quando um usuário adiciona um objeto, quando o objeto desse usuário for aprovado ele GANHA xp e quando for DESAPROVADO ele PERDE XP)
-    //pode ser edicao (apenas quando a edição de um usuário é DESAPROVADA ou APROVADA)
-    //pode ser remover (quando um objeto é removido, o usuário que adicionou PERDE xp)
-    //pode ser aprovar (quando um objeto é aprovado)
     const acao = dados.acao;
-    const status = dados.status; //pode ser TRUE ou FALSE, TRUE adiciona POSITIVAMENTE e FALSE REMOVE xp!
-    console.log("Adicionando xp a "+uid);
+    const objeto = dados.objeto;
+    const quantidade = dados.quantidade;
+    const email = dados.email;
+    const userEmail = dados.userEmail;
+    let lingua = dados.lingua;
+    lingua = lingua == "pt" ? 1 : lingua == "es" ? 2 : 0;
 
-    ref.get().then(doc => {
+    console.log("Adicionado " + quantidade + " xp a " + uid);
+
+    //escanear (adiciona o objeto aos objetos escaneados do usuário)
+    //adicionar (adiciona o objeto aos objetos adicionados)
+    //verificar (adiciona o objeto aos objetos verificados)
+    //remover (envia email ao dono do objeto removido e remove xp)
+    //reportar (envia email a quem reportou e adiciona xp)
+
+    const userRef = firestore.collection('usuarios').doc(uid);
+    userRef.get().then(doc => {
+
         if (doc.exists) {
-            const dados = doc.data();
 
-            //define a quantidade de xp a ser adicionada ou removida
-            let quantidade = 0;
-            if (acao == "adicionar") { quantidade = status ? xpAoAdicionar : xpAoAdicionarF }
-            else if (acao == "edicao") { quantidade = status ? xpAoEditar : xpAoEditarF }
-            else if (acao == "remover") { quantidade = xpAoAdicionar }
-            else if (acao == "escanear") { quantidade = xpAoEscanear }
-            else if (acao == "aprovar") { quantidade = xpAoAprovar }
-            else if (acao == "reportar") { quantidade = status ? xpAoReportar : 0 }
+            let escaneados = doc.data()._codigos;
+            let adicionados = doc.data()._objetosAdicionados;
+            let verificados = doc.data()._objetosVerificados;
+            let xp = doc.data().xp + quantidade;
+            let receberEmails = doc.data().receberEmails;
 
-            //define se é positivo ou negativo
-            quantidade = status ? quantidade : -quantidade;
-
-            let objetosAdicionados = dados._objetosAdicionados;
-            let objetosVerificados = dados._objetosVerificados;
-
-            //define o xp final
-            let xp = dados.xp + quantidade;
-            ref.set({ xp: xp }, {merge: true});
-
-            //adiciona ou remove 1 da quantidade de objetos adicionados, aprovados e removidos se for o caso
-            if (acao == "adicionar") {
-                if (status) { objetosAdicionados.push({ idObjeto: idObjeto, nomeObjeto: dados.nomeObjeto }) }
-                ref.set({ _objetosAdicionados: objetosAdicionados }, {merge: true});
-            }
-            if (acao == "remover") {
-                if (!status) { objetosAdicionados.splice(objetosAdicionados.indexOf({ idObjeto: idObjeto }), 1) }
-                ref.set({ _objetosAdicionados: objetosAdicionados }, {merge: true});
-            }
-            if (acao == "aprovar") {
-                if (status) { objetosVerificados.push({ idObjeto: idObjeto, nomeObjeto: nomeObjeto }); }
-                ref.set({ _objetosVerificados: objetosVerificados }, {merge: true});
+            if (receberEmails && (acao == "aprovado" || acao == "remover" || acao == "reportar") || acao == "editar") {
+                enviarEmail({ email: userEmail, objeto: objeto, titulo: email.titulo, assunto: email.assunto, mensagem: email.mensagem, lingua: lingua });
             }
 
+            //se for escanear
+            if (acao == "escanear") {
+                if (!escaneados.includes(objeto.idObjeto)) {
+                    escaneados.push(objeto.idObjeto);
+                    userRef.update({
+                        _codigos: escaneados,
+                        xp: xp
+                    });
+                }
+            } else if (acao == "adicionar") {
+                //caso não já não tenha o objeto na lista
+                let possui = false;
+                for (i in adicionados) {
+                    if (adicionados[i].id == objeto.idObjeto) {
+                        possui = true;
+                    }
+                }
+
+                //caso não tenha na lista adiciona e adiciona xp
+                if (!possui) {
+                    adicionados.push({ id: objeto.idObjeto, nome: objeto.nome });
+                    userRef.update({
+                        xp: xp,
+                        _objetosAdicionados: adicionados
+                    });
+                }
+            } else if (acao == "verificar") {
+
+                //caso não já não tenha o objeto na lista
+                let possui = false;
+                for (i in verificados) {
+                    if (verificados[i].idAndamento == objeto.idAndamento) {
+                        possui = true;
+                    }
+                }
+
+                if (!possui) {
+                    verificados.push({ id: objeto.idObjeto, idAndamento: objeto.idAndamento });
+                    userRef.update({
+                        _objetosVerificados: verificados,
+                        xp: xp
+                    });
+                }
+            } else {
+                userRef.update({
+                    xp: xp
+                });
+            }
         }
-    })
-
-};
+    });
+}
 
 async function enviarConfirmacao(dados) {
-    const uid = dados.uid; //uid do usuário
+    const email = dados.email;
     const lingua = dados.lingua;
 
     try {
-        const user = await admin.auth().getUser(uid);
-        if (user.emailVerified) {return "OK!"; };
+        const link = await admin.auth().generateEmailVerificationLink(email);
 
-        const link = await admin.auth().generateEmailVerificationLink(user.email);
         const assunto = assuntosVerificacaoEmail[lingua];
         //pega o template do banco de dados
         let emailTemplateDoc = await firestore.collection('templateEmails').doc('confirmacao').get();
@@ -133,7 +158,7 @@ async function enviarConfirmacao(dados) {
         let dadosEmail = emailTemplateDoc.data();
         let template = dadosEmail.EN;
 
-        if (lingua == "1") { template = dadosEmail.PT } else if (lingua == "2") { template = dadosEmail.ES }
+        if (lingua == 1) { template = dadosEmail.PT } else if (lingua == 2) { template = dadosEmail.ES }
 
         //define as variaveis do objeto que serão enviadas
         const variaveis = {
@@ -143,35 +168,30 @@ async function enviarConfirmacao(dados) {
         //replace nos placeholders
         const emailFinal = template.replace(/{\w+}/g, placeholder =>
             variaveis[placeholder.substring(1, placeholder.length - 1)] || placeholder);
-
         //envia o e-mail
         try {
-            const accessToken = await oAuth2Client.getAccessToken();
 
             const transport = nodemailer.createTransport({
                 service: 'gmail',
                 auth: {
-                    type: 'OAuth2',
-                    user: 'apptrimonio@gmail.com',
-                    clientId: CLIENT_ID,
-                    clientSecret: CLIENT_SECRET,
-                    refreshToken: REFRESH_TOKEN,
-                    accessToken: accessToken
+                    user: emailAccount.email,
+                    pass: emailAccount.pass
                 }
             });
 
             const mailOptions = {
                 from: 'Apptrimônio <apptrimonio@gmail.com>',
-                to: user.email,
+                to: email,
                 subject: assunto,
                 html: emailFinal
             };
-            
-            console.log("Enviando e-mail de confirmação para "+user.email);
+
+            console.log("Enviando e-mail de confirmação para " + email);
 
             const result = await transport.sendMail(mailOptions);
             return result;
         } catch (error) {
+            console.log("Erro ao enviar email para " + email + ": " + error);
             return error;
         }
     } catch (error) {
@@ -190,9 +210,9 @@ async function enviarEmail(dados) { //método que envia um e-mail ao usuário, p
     const lingua = dados.lingua; //0 INGLES, 1 PORTUGUES, 2 ESPANHOL
 
     //verifica se o usuário possui e-mails desabilitados
-    const emailUser = await admin.auth().getUserByEmail(email).then(user =>{
-        return firestore.collection('usuarios').doc(user.uid).get().then(doc =>{
-            if(doc.exists){
+    const emailUser = await admin.auth().getUserByEmail(email).then(user => {
+        return firestore.collection('usuarios').doc(user.uid).get().then(doc => {
+            if (doc.exists) {
                 return doc.data().receberEmails;
             }
             return false;
@@ -212,16 +232,16 @@ async function enviarEmail(dados) { //método que envia um e-mail ao usuário, p
 
     //define as variaveis do objeto que serão enviadas
     const variaveis = {
-        IMAGEM: objeto.imagem == undefined ? "https://v0.static.betalabs.com.br/ecommerce/maxibanho/img/unavailable-m.jpg" : "data:image/png;base64," + objeto.imagem,
-        NOME: objeto.nome == undefined ? naoInformado[lingua] : objeto.nome,
-        VALOR: objeto.valor == undefined ? naoInformado[lingua] : objeto.valor,
-        CATEGORIA: objeto.categoria == undefined ? naoInformado[lingua] : objeto.categoria,
-        COMPRA: objeto.compra == undefined ? naoInformado[lingua] : objeto.compra,
-        LOCAL: objeto.local == undefined ? naoInformado[lingua] : objeto.local,
-        VALORSENTIMENTAL: objeto.valorSentimental == undefined ? naoInformado[lingua] : objeto.valorSentimental,
-        DESCRICAOIMAGEM: objeto.descricaoImagem == undefined ? naoInformado[lingua] : objeto.descricaoImagem,
+        IMAGEM: objeto.imagem == "" ? "https://v0.static.betalabs.com.br/ecommerce/maxibanho/img/unavailable-m.jpg" : objeto.imagem,
+        NOME: objeto.nome == "" ? naoInformado[lingua] : objeto.nome,
+        VALOR: objeto.valor == 0 ? naoInformado[lingua] : objeto.valor,
+        CATEGORIA: objeto.categoria == "" ? naoInformado[lingua] : objeto.categoria,
+        COMPRA: objeto.compra == "" ? naoInformado[lingua] : new Date(objeto.compra),
+        LOCAL: objeto.local == "" ? naoInformado[lingua] : objeto.local,
+        VALORSENTIMENTAL: objeto.valorSentimental == "" ? naoInformado[lingua] : objeto.valorSentimental,
+        DESCRICAOIMAGEM: objeto.descricaoImagem == "" ? naoInformado[lingua] : objeto.descricaoImagem,
         TITULO: titulo,
-        DESCRICAO: objeto.descricao == undefined ? naoInformado[lingua] : objeto.descricao,
+        DESCRICAO: objeto.descricao == "" ? naoInformado[lingua] : objeto.descricao,
         MENSAGEM: mensagem
     };
 
@@ -231,17 +251,11 @@ async function enviarEmail(dados) { //método que envia um e-mail ao usuário, p
 
     //envia o e-mail
     try {
-        const accessToken = await oAuth2Client.getAccessToken();
-
         const transport = nodemailer.createTransport({
             service: 'gmail',
             auth: {
-                type: 'OAuth2',
-                user: 'apptrimonio@gmail.com',
-                clientId: CLIENT_ID,
-                clientSecret: CLIENT_SECRET,
-                refreshToken: REFRESH_TOKEN,
-                accessToken: accessToken
+                user: emailAccount.email,
+                pass: emailAccount.pass
             }
         });
 
@@ -252,62 +266,74 @@ async function enviarEmail(dados) { //método que envia um e-mail ao usuário, p
             html: emailFinal
         };
 
+        console.log("Enviando e-mail para " + email);
+
         const result = await transport.sendMail(mailOptions);
         return result;
     } catch (error) {
+        console.log("Erro ao enviar e-mail para " + email);
         return error;
     }
 }
 
+//envia o e-mail de confirmação do apptrimônio
 exports.enviarEmailConfirmacao = functions.https.onRequest((request, response) => { //quando o usuário deseja confirmar o e-mail
 
     //dados do usuário
     const token = request.body.token;
-    const lingua = request.body.lingua;
+    let lingua = request.body.lingua;
 
     //verifica se tem as variáveis necessárias
-    if (lingua == null || token == undefined) { return response.status(400).send("Bad request."); }
+    if (lingua == null || token == undefined || lingua == "" || token == "") {
+        console.log("Bad request. Lingua ou token inválido.");
+        return response.status(400).send("Bad request.");
+    }
+
+    lingua = lingua == "pt" ? 1 : lingua == "es" ? 2 : 0;
 
     return admin.auth().verifyIdToken(token).then((decodedToken) => {
 
-        const uid = decodedToken.uid;
+        const email = decodedToken.email;
 
-        enviarConfirmacao({ uid: uid, lingua: lingua });
+        enviarConfirmacao({ email: email, lingua: lingua });
         return response.status(200).send("OK!");
 
-    }).catch(() => {//caso não for um token válido (não for um usuário)
-        return response.status(200).send(resposta); //envia a response como objeto padrão (sem gerenciador, xp e badges)
+    }).catch(() => { //caso não for um token válido (não for um usuário)
+        console.log("Unauthorized. Token inválido.");
+        return response.status(401).send("Unauthorized.");
     });
 });
 
+//define se quer ou não quer receber e-mails do apptrimonio
 exports.receberEmails = functions.https.onRequest((request, response) => { //função chamada ao ativar ou desativar o recebimento de emails
 
     //váriaveis recebidas do usuário
     const token = request.body.token; //token do usuário
-    const status = request.body.status; //TRUE caso quiser receber e-mails e FALSE caso não quiser
-
-    status = status == true || status == false ? status : true;
+    let status = (request.body.status === 'true'); //TRUE caso quiser receber e-mails e FALSE caso não quiser
 
     return admin.auth().verifyIdToken(token).then(decodedToken => {
 
         const uid = decodedToken.uid;
         const userRef = firestore.collection('usuarios').doc(uid);
 
-        userRef.set({ receberEmails: status }, {merge: true});
+        userRef.update({ receberEmails: status });
 
         return response.status(200).send({ status: status });
 
     }).catch(() => {
+        console.log("Unauthorized. Token inválido.");
         return response.status(401).send("Unauthorized."); //envia a response como erro (token inválido)
     });
 });
 
+//ao entrar no aplicativo ou fazer login, recebe os dados do banco de dados do usuário
 exports.verificarConta = functions.https.onRequest((request, response) => { //função para verificar se o usuário é gerenciador ou não
 
     const token = request.body.token; //recebe o token do usuário
-    const lingua = request.body.lingua != 0 && request.body.lingua != 1 && request.body.lingua != 2 ? 0 : request.body.lingua;
+    let lingua = request.body.lingua;
+    lingua = lingua == "pt" ? 1 : lingua == "es" ? 2 : 0;
 
-    var resposta = { //resposta que será enviada ao cliente
+    let resposta = { //resposta que será enviada ao cliente
         gerenciador: false,
         editar: false,
         adicionar: false,
@@ -321,7 +347,8 @@ exports.verificarConta = functions.https.onRequest((request, response) => { //fu
     //decodifica o token do usuário para ver se é realmente um usuário
     return admin.auth().verifyIdToken(token).then((decodedToken) => {
         const uid = decodedToken.uid; //token do usuário
-        const emailVerificado = decodedToken.email_verified;
+        const emailVerificado = admin.auth().getUser(uid).then((userRecord => { return userRecord.emailVerified; })).catch(() => { return false; });
+        const email = decodedToken.email;
 
         return firestore.collection('usuarios').doc(uid).get().then(doc => { //pega as informações do usuário na tabela usuarios
 
@@ -345,34 +372,32 @@ exports.verificarConta = functions.https.onRequest((request, response) => { //fu
                     _codigos: [],
                     _objetosAdicionados: [],
                     _objetosVerificados: [],
-                    email: decodedToken.email,
+                    email: email,
                     receberEmails: true
                 });
-                
-                console.log("email verificado: "+emailVerificado);
 
                 //envia o e-mail de confirmação após criar o usuário caso não estiver verificado
                 if (!emailVerificado) {
-                    console.log("enviando email");
-                    enviarConfirmacao({ uid: uid, lingua: lingua });
+                    enviarConfirmacao({ email: email, lingua: lingua });
                 }
             }
             return response.status(200).send(resposta);
         });
-
     }).catch(() => { //caso não for um token válido (não for um usuário)
-        return response.status(200).send(resposta); //envia a response como objeto padrão (sem gerenciador, xp e badges)
+        console.log("Unauthorized. Token inválido.");
+        return response.status(401).send("Unauthorized."); //envia a response como objeto padrão (sem gerenciador, xp e badges)
     });
-
 });
 
+//ao escanear um qrcode (ganha xp) ou ao pesquisar pelo objeto (não ganha xp)
 exports.requisitarObjeto = functions.https.onRequest((request, response) => { //função para verificar se o objeto requisitado existe e retornar ao usuário
 
     const idObjeto = request.body.idObjeto.trim(); //id do objeto que o usuário envia
     const token = request.body.token; //recebe o token do usuário caso existir
 
-    if (idObjeto == undefined) { //verifica se o id realmente tem algo
-        return response.status(400).send({status: "Bad request."});
+    if (idObjeto == undefined || idObjeto == "") { //verifica se o id realmente tem algo
+        console.log("Bad request. idObjeto inválido.");
+        return response.status(400).send({ status: "Bad request." });
     }
 
     return firestore.collection('objetos').doc(idObjeto).get().then(doc => { //pega o documento do banco de dados
@@ -387,7 +412,8 @@ exports.requisitarObjeto = functions.https.onRequest((request, response) => { //
                 motivo: data._status
             };
 
-            if(data._aprovacao == "desaprovado" || data._aprovacao == "andamento" || data._aprovacao == "excluido"){
+            if (data._aprovacao == "desaprovado" || data._aprovacao == "andamento" || data._aprovacao == "excluido") {
+                console.log("Objeto desaprovado, em andamento ou excluído.");
                 return response.status(404).send(desaprovado);
             }
 
@@ -402,93 +428,108 @@ exports.requisitarObjeto = functions.https.onRequest((request, response) => { //
                 local: data.local,
                 nome: data.nome,
                 valor: data.valor,
-                valorSentimental: data.valorSentimental
+                valorSentimental: data.valorSentimental,
+                idObjeto: idObjeto
             };
 
             //caso estiver um usuário logado adiciona o objeto aos objetos escaneados e adiciona xp
-            if (token != undefined) {
-                admin.auth().verifyIdToken(token).then(decodedToken =>{
+            if (token != undefined && token != "") {
+                admin.auth().verifyIdToken(token).then(decodedToken => {
                     const uid = decodedToken.uid;
-                    const userRef = firestore.collection('usuarios').doc(uid);
-                    userRef.get().then(doc =>{
-                        if(doc.exists){
-                            let xp = doc.data().xp;
-                            let codigos = doc.data()._codigos;
-
-                            //caso não tenha escaneado esse código
-                            if(!codigos.includes(idObjeto)){
-                                codigos.push(idObjeto);
-                                xp += xpAoEscanear;
-                                userRef.set({
-                                    xp: xp,
-                                    _codigos: codigos
-                                }, {merge: true});
-                            }
-                        }
-                    })
+                    adicionarXP({ uid: uid, acao: "escanear", objeto: objeto, quantidade: xpAoEscanear });
                 });
             }
+
             //retorna o objeto
             return response.status(200).send(objeto);
 
         } else { //caso o objeto não exista no banco de dados
-            return response.status(404).send("Object not found!");
+            console.log("Object not found! O objeto não foi encontrado.");
+            return response.status(404).send({ status: "Object not found!" });
         }
     });
 });
 
+//ao tentar adicionar um objeto
 exports.adicionarObjeto = functions.https.onRequest((request, response) => { //função para adicionar um objeto
 
     //variaveis recebidas
     const nome = request.body.nome;
     const categoria = request.body.categoria;
-    const dataCompra = request.body.dataCompra;
+    let dataCompra = request.body.dataCompra;
     const valor = request.body.valor;
     const local = request.body.local;
     const descricaoImagem = request.body.descricaoImagem;
     const valorSentimental = request.body.valorSentimental;
-    const lingua = request.body.lingua;
+    let lingua = request.body.lingua;
     const descricao = request.body.descricao;
 
     const imagem = request.body.imagem;
     const token = request.body.token;
+
+    if (nome == undefined || nome == "" || categoria == undefined || categoria == "" || valor == undefined || valor == "" || imagem == undefined || imagem == "" || local == undefined || local == "" || descricaoImagem == undefined || descricaoImagem == "" || lingua == undefined || lingua == "") {
+        console.log("Bad request. Um dos campos necessários para adicionar o objeto é inválido.");
+        return response.status(400).send("Bad request."); //caso faltar algum campo
+    }
+
+    dataCompra = dataCompra == "0" || dataCompra == undefined ? "" : new Date(Number(dataCompra));
 
     //verifica se o token do usuário é válido
     return admin.auth().verifyIdToken(token).then((decodedToken) => {
 
         const uid = decodedToken.uid;
         const email = decodedToken.email;
-        const emailVerificado = decodedToken.email_verified;
-
-        if (nome == undefined || categoria == undefined || valor == undefined || imagem == undefined || local == undefined || descricaoImagem == undefined || lingua == undefined) {
-            return response.status(400).send("Bad request."); //caso faltar algum campo
-        }
+        const emailVerificado = admin.auth().getUser(uid).then((userRecord => { return userRecord.emailVerified; })).catch(() => { return false; });
 
         //verifica se o usuário possui permissão pra adicionar objeto
-        return firestore.collection('usuarios').doc(uid).get().then(doc => {
+        return firestore.collection('usuarios').doc(uid).get().then(async(doc) => {
 
             if (!doc.exists) { //caso não existir o arquivo
+                console.log("Unauthorized. O usuário não está presente no banco de dados.");
                 return response.status(401).send("Unauthorized.");
             }
 
-            if (!emailVerificado) { return response.status(401).send("Email not verified."); } //verifica se o email está verificado
+            if (!emailVerificado) {
+                console.log("Email not verified. O e-mail do usuário não está verificado.");
+                return response.status(401).send("Email not verified.");
+            } //verifica se o email está verificado
 
             const xp = doc.data().xp;
 
             if (xp < xpAdicionar) { //caso não possuir permissão
+                console.log("Unauthorized. O usuário não possui xp suficiente.");
                 return response.status(401).send("Unauthorized.");
             }
 
-            const objeto = {
+            const refObjeto = firestore.collection('objetos').doc();
+            const bucket = storage.bucket("apptrimonio-9844d.appspot.com");
+            const imageId = crypto.randomBytes(10).toString("base64").replace("/", "*");
+            const file = bucket.file(refObjeto.id + "-" + imageId + ".jpg");
+            const buffer = new Uint8Array(Buffer.from(imagem, "base64"));
+            const options = { resumable: false, metadata: { contentType: "image/jpg" } };
+
+            const url = await file.save(buffer, options).then(() => {
+                return file.getSignedUrl({ action: "read", expires: '03-09-2500' });
+            }).then(urls => {
+                const url2 = urls[0];
+                console.log("URL: " + url2);
+                return url2;
+            }).catch(error => {
+                console.log("Erro: " + error);
+                console.log("Upload error. Ocorreu um erro ao fazer upload do arquivo.");
+                return "";
+            });
+
+            let objeto = {
                 _adicionadoPor: email,
                 _adicionadoPorUID: uid,
                 _aprovacao: "andamento",
                 _aprovadoPor: null,
                 _aprovadoPorUID: null,
                 _aprovadoEm: null,
-                editores: [],
+                _editores: [],
                 nome: nome,
-                _imagem: imagem,
+                _imagem: url,
                 _lingua: lingua,
                 categoria: categoria,
                 compra: dataCompra,
@@ -499,44 +540,60 @@ exports.adicionarObjeto = functions.https.onRequest((request, response) => { //f
                 valorSentimental: valorSentimental
             };
 
-            const refObjeto = firestore.collection('objetos').doc();
+            let objeto2 = Object.assign({}, objeto);
+            objeto2.idObjeto = refObjeto.id;
+            objeto2.imagem = url;
+
+            let resposta = {
+                idObjeto: refObjeto.id,
+                aprovacao: "andamento"
+            };
 
             //caso for gerenciador (não precisa de aprovação de gerenciador)
-            if (xp >= xpAdicionar) {
+            if (xp >= xpGerenciador) {
                 objeto._aprovacao = "aprovado";
                 objeto._aprovadoPor = email;
-                objeto._adicionadoPorUID = uid;
-                objeto._aprovadoEm = admin.database.ServerValue.TIMESTAMP;
+                objeto._aprovadoPorUID = uid;
+                objeto._aprovadoEm = admin.firestore.FieldValue.serverTimestamp();
 
-                //adiciona o xp e o objeto no usuário
-                userAddXp({ uid: uid, acao: 'adicionar', status: true, idObjeto: refObjeto.id, nomeObjeto: nome });
+                resposta.aprovacao = "aprovado";
+                resposta.imagem = url;
 
-                //enviar email a quem adicionou
-                enviarEmail({ email: email, objeto: { IMAGEM: imagem, CATEGORIA: categoria, COMPRA: dataCompra, DESCRICAOIMAGEM: descricaoImagem, DESCRICAO: descricao, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosAddAprovado[lingua], assunto: assuntosAddAprovado[lingua], mensagem: mensagens1[lingua], lingua: lingua });
-
+                //adiciona o objeto aos objetos adicionados e adiciona xp
+                lingua = lingua == "pt" ? 1 : lingua == "es" ? 2 : 0;
+                adicionarXP({ uid: uid, acao: "aprovado", objeto: objeto2, email: { titulo: titulosAddAprovado[lingua], assunto: assuntosAddAprovado[lingua], mensagem: mensagens1[lingua] }, userEmail: email, lingua: lingua, quantidade: xpAoAdicionar });
             } else { //caso não for gerenciador (precisa de aprovação de gerenciador)
 
                 //adicionar objeto em andamento no banco de dados "andamento"
                 const refAndamento = firestore.collection('andamento').doc();
-                refAndamento.create({
-                    idObjeto: refObjeto.id,
-                    tipo: 'add'
-                });
+                objeto2.idAndamento = refAndamento.id;
+                objeto2.tipo = "add";
+
+                refAndamento.create(objeto2);
             }
 
-            //adiciona o objeto ao banco de dados e retorna o id dele
-            refObjeto.create(objeto);
+            //adiciona o objeto ao usuario
+            adicionarXP({ uid: uid, acao: "adicionar", objeto: objeto2, userEmail: email, lingua: lingua, quantidade: 0 });
 
-            return response.status(200).send(refObjeto.id);
+            //adiciona o objeto ao banco de dados e retorna o id dele
+            return refObjeto.create(objeto).then(() => {
+                return response.status(200).send(resposta);
+            }).catch(error => {
+                console.log(error);
+                console.log("An error occurred! Ocorreu um erro desconhecido ao criar o objeto.");
+                return response.status(500).send("An error occurred!");
+            });
 
         });
 
     }).catch(() => {
+        console.log("Unauthorized. O token é inválido.");
         return response.status(401).send("Unauthorized."); //envia a response como erro (token inválido)
     });
 
 });
 
+//ao tentar editar um objeto
 exports.editarObjeto = functions.https.onRequest((request, response) => { //função para editar um objeto
 
     //valores que o usuário envia
@@ -554,81 +611,139 @@ exports.editarObjeto = functions.https.onRequest((request, response) => { //fun�
     let lingua = request.body.lingua;
     let descricao = request.body.descricao;
 
+    compra = compra == "0" || compra == undefined ? "" : new Date(Number(compra));
+
+
     //caso o token ou o id do objeto não foi enviado
-    if (token == undefined || idObjeto == undefined) { return response.status(400).send("Bad request.") }
+    if (token == undefined || idObjeto == undefined || token == "" || idObjeto == "") { return response.status(400).send("Bad request.") }
 
     //verifica se o token do usuário é válido
     return admin.auth().verifyIdToken(token).then((decodedToken) => {
 
         const uid = decodedToken.uid;
         const email = decodedToken.email;
-        const emailVerificado = decodedToken.email_verified;
+        const emailVerificado = admin.auth().getUser(uid).then((userRecord => { return userRecord.emailVerified; })).catch(() => { return false; });
         const userRef = firestore.collection('usuarios').doc(uid);
         const andamentoRef = firestore.collection('andamento').doc();
         const objetoRef = firestore.collection('objetos').doc(idObjeto);
 
-        if (!emailVerificado) { return response.status(401).send("Email not verified."); } //verifica se o email está verificado
+        if (!emailVerificado) {
+            console.log("Email not verified. O e-mail do usuário não está verificado.");
+            return response.status(401).send("Email not verified.");
+        } //verifica se o email está verificado
 
         //pega o xp do usuário
-        return userRef.get().then(userDoc => {
+        return userRef.get().then(async(userDoc) => {
 
             //caso não existir o arquivo do usuário
-            if (!userDoc.exists) { return response.status(401).send("Unauthorized."); }
+            if (!userDoc.exists) {
+                console.log("Unauthorized. Não há dados do usuário no banco de dados.");
+                return response.status(401).send("Unauthorized.");
+            }
 
             const xp = userDoc.data().xp;
 
             //caso não possuir permissão para editar um objeto
-            if (xp < xpEditar) { return response.status(401).send("Unauthorized."); }
+            if (xp < xpEditar) {
+                console.log("Unauthorized. O usuário não possui xp necessário para fazer a edição.");
+                return response.status(401).send("Unauthorized.");
+            }
 
-            //caso não possuir permissão de gerenciador adiciona em andamento
-            if (xp < xpGerenciador) {
-                andamentoRef.create({
-                    _editadoPor: email,
-                    _editadoPorUID: uid,
-                    _lingua: lingua,
-                    editCategoria: categoria,
-                    editCompra: compra,
-                    editDescricaoImagem: descricaoImagem,
-                    editImagem: imagem,
-                    editLocal: local,
-                    editNome: nome,
-                    editValor: valor,
-                    descricao: descricao,
-                    editValorSentimental: valorSentimental,
-                    idObjeto: idObjeto,
-                    tipo: 'edit'
+            //caso possuir imagem faz upload
+            if (imagem != undefined && imagem != "") {
+                const bucket = storage.bucket("apptrimonio-9844d.appspot.com");
+                const imageId = crypto.randomBytes(10).toString("base64").replace("/", "*");;
+                const file = bucket.file(objetoRef.id + "-" + imageId + ".jpg");
+                const buffer = new Uint8Array(Buffer.from(imagem, "base64"));
+                const options = { resumable: false, metadata: { contentType: "image/jpg" } };
+
+                imagem = await file.save(buffer, options).then(() => {
+                    return file.getSignedUrl({ action: "read", expires: '03-09-2500' });
+                }).then(urls => {
+                    const url = urls[0];
+                    console.log("URL: " + url);
+                    return url;
+                }).catch(error => {
+                    console.log(error);
+                    console.log("Erro ao fazer upload da imagem.");
+                    return "";
                 });
+            }
 
-            } else {
-                //caso possuir gerenciador obtém os dados do objeto
-                objetoRef.get().then(objetoDoc => {
+            let resposta = {
+                status: "andamento"
+            };
 
-                    //caso não existir o objeto
-                    if (!objetoDoc.exists) { return response.status(404).send("Object not found!"); }
+            return objetoRef.get().then(objetoDoc => {
 
-                    const dadosObjeto = objetoDoc.data();
-                    const criadoPor = dadosObjeto._adicionadoPor;
+                //caso não existir o objeto
+                if (!objetoDoc.exists) {
+                    console.log("Object not found! O objeto não foi encontrado no banco de dados!");
+                    return response.status(404).send("Object not found!");
+                }
+
+                const dadosObjeto = objetoDoc.data();
+                const criadoPor = dadosObjeto._adicionadoPor;
+                const criadoPorUID = dadosObjeto._adicionadoPorUID;
+
+                //caso não possuir permissão de gerenciador adiciona em andamento
+                if (xp < xpGerenciador) {
+                    andamentoRef.create({
+                        _editadoPor: email,
+                        _editadoPorUID: uid,
+                        _adicionadoPor: criadoPor,
+                        _adicionadoPorUID: criadoPorUID,
+                        _lingua: lingua,
+                        editCategoria: categoria,
+                        editCompra: compra,
+                        editDescricaoImagem: descricaoImagem,
+                        editImagem: imagem,
+                        editLocal: local,
+                        editNome: nome,
+                        editValor: valor,
+                        editDescricao: descricao,
+                        editValorSentimental: valorSentimental,
+                        idObjeto: idObjeto,
+                        idAndamento: andamentoRef.id,
+                        tipo: 'edit'
+                    });
+
+                    return response.status(200).send(resposta);
+                } else {
+                    //caso possuir gerenciador obtém os dados do objeto
+                    resposta.status = "aprovado";
+                    resposta.imagem = imagem;
 
                     //define a lingua do objeto
-                    const lingua = dadosObjeto._lingua;
-                    if (lingua == "pt") { lingua = 1 } else if (lingua == "es") { lingua == 2; } else { lingua = 0; }
+                    let lingua = dadosObjeto._lingua;
 
                     let editores = dadosObjeto._editores;
                     editores.push(email);
-                    imagem = imagem != undefined ? imagem : dadosObjeto._imagem;
-                    categoria = categoria != undefined ? categoria : dadosObjeto.categoria;
-                    compra = compra != undefined ? compra : dadosObjeto.compra;
-                    descricaoImagem = descricaoImagem != undefined ? descricaoImagem : dadosObjeto.descricaoImagem;
-                    local = local != undefined ? local : dadosObjeto.local;
-                    nome = nome != undefined ? nome : dadosObjeto.nome;
-                    valor = valor != undefined ? valor : dadosObjeto.valor;
-                    valorSentimental = valorSentimental != undefined ? valorSentimental : dadosObjeto.valorSentimental;
-                    descricao = descricao != undefined ? descricao : dadosObjeto.descricao;
+                    imagem = imagem != undefined && imagem != "" ? imagem : dadosObjeto._imagem;
+                    categoria = categoria != undefined && categoria != "" ? categoria : dadosObjeto.categoria;
+                    descricaoImagem = descricaoImagem != undefined && descricaoImagem != "" ? descricaoImagem : dadosObjeto.descricaoImagem;
+                    local = local != undefined && local != "" ? local : dadosObjeto.local;
+                    nome = nome != undefined && nome != "" ? nome : dadosObjeto.nome;
+                    compra = compra != undefined && compra != "0" ? compra : dadosObjeto.compra;
+                    valor = valor != undefined && valor != "" ? valor : dadosObjeto.valor;
+                    valorSentimental = valorSentimental != undefined && valorSentimental != "" ? valorSentimental : dadosObjeto.valorSentimental;
+                    descricao = descricao != undefined && descricao != "" ? descricao : dadosObjeto.descricao;
+
+                    let objeto2 = Object.assign({}, objetoDoc.data());
+                    objeto2.imagem = imagem;
+                    objeto2.categoria = categoria;
+                    objeto2.compra = compra;
+                    objeto2.descricaoImagem = descricaoImagem;
+                    objeto2.local = local;
+                    objeto2.nome = nome;
+                    objeto2.descricao = descricao;
+                    objeto2.valor = valor;
+                    objeto2.valorSentimental = valorSentimental;
 
                     //seta os valores no objeto
                     objetoRef.set({
                         _editores: editores,
-                        _imagem: _imagem,
+                        _imagem: imagem,
                         categoria: categoria,
                         compra: compra,
                         descricaoImagem: descricaoImagem,
@@ -636,26 +751,26 @@ exports.editarObjeto = functions.https.onRequest((request, response) => { //fun�
                         nome: nome,
                         descricao: descricao,
                         valor: valor,
-                        valorSentimental: valorSentimental
-                    }, {merge: true});
+                        valorSentimental: valorSentimental,
+                        _lingua: lingua
+                    }, { merge: true });
+
+                    lingua = lingua == "pt" ? 1 : lingua == "es" ? 2 : 0;
 
                     //envia e-mail a quem editou
-                    enviarEmail({ email: email, objeto: { IMAGEM: imagem, DESCRICAO: descricao, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosEditAprovada[lingua], assunto: assuntosEditAprovada[lingua], mensagem: mensagens4[lingua], lingua: lingua });
+                    adicionarXP({ uid: uid, acao: "editar", objeto: objeto2, email: { titulo: titulosEditAprovada[lingua], assunto: assuntosEditAprovada[lingua], mensagem: mensagens4[lingua] }, userEmail: email, lingua: objeto2.lingua, quantidade: xpAoEditar });
                     //envia e-mail a quem criou
-                    enviarEmail({ email: criadoPor, objeto: { IMAGEM: imagem, DESCRICAO: descricao, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosObjEditado[lingua], assunto: assuntosObjEditado[lingua], mensagem: mensagens1[lingua], lingua: lingua });
+                    adicionarXP({ uid: criadoPorUID, acao: "editar", objeto: objeto2, email: { titulo: titulosObjEditado[lingua], assunto: assuntosObjEditado[lingua], mensagem: mensagens3[lingua] }, userEmail: criadoPor, lingua: objeto2.lingua, quantidade: 0 });
 
-                });
-            }
-
-            //retorna ok
-            return response.status(200).send("OK!");
-
+                    return response.status(200).send(resposta);
+                }
+            });
         });
-
-    }).catch(() => {
+    }).catch(error => {
+        console.log("Unauthorized. O token é inválido.");
+        console.log(error);
         return response.status(401).send("Unauthorized."); //envia a response como erro (token inválido)
     });
-
 });
 
 exports.removerObjeto = functions.https.onRequest((request, response) => { //função para remover um objeto
@@ -665,15 +780,21 @@ exports.removerObjeto = functions.https.onRequest((request, response) => { //fun
     const token = request.body.token; //recebe o token do usuário que quer remover o objeto
     const motivo = request.body.motivo; //recebe o motivo da remoção do objeto
 
-    if (idObjeto == undefined || token == undefined || motivo == undefined) { return response.status(404).send("Bad request."); } //caso o usuário não enviou um dos parametros
+    if (idObjeto == undefined || token == undefined || motivo == undefined || idObjeto == "" || token == "" || motivo == "") {
+        console.log("Bad request. idObjeto, token ou motivo é inválido");
+        return response.status(404).send("Bad request.");
+    } //caso o usuário não enviou um dos parametros
 
     return admin.auth().verifyIdToken(token).then((decodedToken) => {
 
         const uid = decodedToken.uid; //uid do usuário
         const email = decodedToken.email;
-        const emailVerificado = decodedToken.email_verified;
+        const emailVerificado = admin.auth().getUser(uid).then((userRecord => { return userRecord.emailVerified; })).catch(() => { return false; });
 
-        if (!emailVerificado) { return response.status(401).send("Email not verified."); } //verifica se o email está verificado
+        if (!emailVerificado) {
+            console.log("Email not verified. O e-mail do usuário não é verificado.");
+            return response.status(401).send("Email not verified.");
+        } //verifica se o email está verificado
 
         const refUser = firestore.collection('usuarios').doc(uid);
         const refObjeto = firestore.collection('objetos').doc(idObjeto);
@@ -682,11 +803,17 @@ exports.removerObjeto = functions.https.onRequest((request, response) => { //fun
         return refObjeto.get().then(doc => {
 
             if (!doc.exists) { //caso o objeto não exista
+                console.log("Object not found. O objeto não foi encontrado no banco de dados.");
                 return response.status(404).send("Object not found!");
             }
 
             const dataObj = doc.data();
-            const lingua = dataObj._lingua;
+            let lingua = dataObj._lingua;
+            const adicionadoPor = dataObj._adicionadoPor;
+            const adicionadoPorUID = dataObj._adicionadoPorUID;
+            let objeto2 = Object.assign({}, dataObj);;
+            objeto2.imagem = dataObj._imagem;
+            objeto2.idObjeto = refObjeto.id;
             if (lingua == "pt") { lingua = 1; } else if (lingua == "es") { lingua = 2; } else { lingua = 0; }
 
             const editores = dataObj._editores;
@@ -694,20 +821,26 @@ exports.removerObjeto = functions.https.onRequest((request, response) => { //fun
 
             //verifica se o usuário possui XP suficiente para ser gerenciador
             return refUser.get().then(docUser => {
-                if (!docUser.exists) { return response.status(401).send("Unauthorized."); }
+                if (!docUser.exists) {
+                    console.log("Unauthorized. O usuário não está no banco de dados.");
+                    return response.status(401).send("Unauthorized.");
+                }
 
                 const xp = docUser.data().xp;
 
-                if (xp < xpGerenciador && uid != dataObj._adicionadoPorUID) { return response.status(401).send("Unauthorized."); } //caso não for o criador do objeto ou gerenciador
+                if (xp < xpGerenciador && uid != dataObj._adicionadoPorUID) {
+                    console.log("Unauthorized. O usuário não possui xp necessário para se tornar gerenciador ou então não é o criador do objeto.");
+                    return response.status(401).send("Unauthorized.");
+                } //caso não for o criador do objeto ou gerenciador
 
                 //exclui o objeto
                 refObjeto.set({
                     _aprovacao: 'excluido',
                     _status: motivo,
-                    _excluidoEm: admin.database.ServerValue.TIMESTAMP,
+                    _excluidoEm: admin.firestore.FieldValue.serverTimestamp(),
                     _excluidoPor: email,
                     _excluidoPorUID: uid
-                }, {merge: true});
+                }, { merge: true });
 
                 //caso a exclusão for proveniente de um report (remove o objeto em andamento, adiciona xp a quem reportou e remove de quem adicionou e envia email)
                 if (idAndamento != undefined) {
@@ -719,8 +852,6 @@ exports.removerObjeto = functions.https.onRequest((request, response) => { //fun
                         if (docAndamento.exists) {
                             const dataAndamento = docAndamento.data();
                             const tipo = dataAndamento.tipo;
-                            const quemAdicionou = dataAndamento._adicionadoPor;
-                            const quemAdicionouUID = dataAndamento._adicionadoPorUID;
                             const quemReportou = dataAndamento._reportadoPor;
                             const quemReportouUID = dataAndamento._reportadoPorUID;
 
@@ -729,26 +860,17 @@ exports.removerObjeto = functions.https.onRequest((request, response) => { //fun
                                 //remove o objeto
                                 refAndamento.delete();
 
-                                //adiciona xp a quem reportou, ao gerenciador e remove de quem adicionou
-                                userAddXp({ uid: uid, acao: 'aprovar', status: true, idObjeto: idAndamento });
-                                userAddXp({ uid: quemAdicionouUID, acao: 'remover', status: false, idObjeto: idAndamento });
-                                userAddXp({ uid: quemReportouUID, acao: 'reportar', status: true, idObjeto: idAndamento });
-
-                                //envia email a quem reportou
-                                enviarEmail({ email: quemReportou, objeto: { IMAGEM: dataObj._imagem, DESCRICAO: dataObj.descricao, CATEGORIA: dataObj.categoria, COMPRA: dataObj.compra, DESCRICAOIMAGEM: dataObj.descricaoImagem, LOCAL: dataObj.local, VALOR: dataObj.valor, VALORSENTIMENTAL: dataObj.valorSentimental, NOME: dataObj.nome }, titulo: titulosReportRemovido[lingua], assunto: assuntosReport[lingua], mensagem: mensagens4[lingua], lingua: lingua });
-
+                                //adiciona xp a quem reportou, ao gerenciador
+                                adicionarXP({ uid: quemReportouUID, acao: "reportar", objeto: objeto2, email: { titulo: titulosReportRemovido[lingua], assunto: assuntosReport[lingua], mensagem: mensagens4[lingua] }, userEmail: quemReportou, lingua: dataObj.lingua, quantidade: xpAoReportar });
+                                adicionarXP({ uid: uid, acao: "verificar", email: { titulo: titulosRemocaoAprovada[lingua], assunto: assuntosRemocaoAprovada[lingua], mensagem: mensagens4[lingua] }, objeto: objeto2, userEmail: email, lingua: dataObj.lingua, quantidade: xpAoAprovar });
                             }
                         }
                     });
                 }
 
                 //remove xp do criador
-                userAddXp({ uid: dataObj._adicionadoPorUID, status: false, acao: 'remover' });
+                adicionarXP({ uid: adicionadoPorUID, acao: "remover", objeto: objeto2, email: { titulo: titulosObjRemovido[lingua], assunto: assuntosObjRemovido[lingua], mensagem: mensagens3[lingua] }, userEmail: adicionadoPor, lingua: dataObj.lingua, quantidade: -xpAoAdicionar });
 
-                //envia e-mail a quem criou
-                enviarEmail({ email: quemReportou, objeto: { IMAGEM: dataObj._imagem, DESCRICAO: dataObj.descricao,CATEGORIA: dataObj.categoria, COMPRA: dataObj.compra, DESCRICAOIMAGEM: dataObj.descricaoImagem, LOCAL: dataObj.local, VALOR: dataObj.valor, VALORSENTIMENTAL: dataObj.valorSentimental, NOME: dataObj.nome }, titulo: titulosObjRemovido[lingua], assunto: assuntosObjRemovido[lingua], mensagem: mensagens2[lingua], lingua: lingua });
-                //envia e-mail a quem removeu
-                enviarEmail({ email: quemReportou, objeto: { IMAGEM: dataObj._imagem,DESCRICAO: dataObj.descricao, CATEGORIA: dataObj.categoria, COMPRA: dataObj.compra, DESCRICAOIMAGEM: dataObj.descricaoImagem, LOCAL: dataObj.local, VALOR: dataObj.valor, VALORSENTIMENTAL: dataObj.valorSentimental, NOME: dataObj.nome }, titulo: titulosRemocaoAprovada[lingua], assunto: assuntosRemocaoAprovada[lingua], mensagem: mensagens4[lingua], lingua: lingua });
 
                 return response.status(200).send("OK!");
             });
@@ -756,6 +878,7 @@ exports.removerObjeto = functions.https.onRequest((request, response) => { //fun
         });
     }).catch((error) => {
         console.log(error);
+        console.log("Unauthorized. O token é inválido.");
         return response.status(401).send("Unauthorized."); //envia a response como erro (token inválido)
     });
 });
@@ -764,28 +887,45 @@ exports.objetosAndamento = functions.https.onRequest((request, response) => { //
 
     //recebe token do usuário
     const token = request.body.token;
+    if (token == undefined || token == "") {
+        console.log("Bad request. O token é inválido.");
+        return response.status(404).send("Bad request.");
+    } //caso o usuário não enviou um dos parametros
+
     const andamentoRef = firestore.collection('andamento');
 
     //verifica se o token é válido
     return admin.auth().verifyIdToken(token).then(decodedToken => {
 
-
-        const emailVerificado = decodedToken.email_verified;
         const uid = decodedToken.uid;
-        if (!emailVerificado) { return response.status(401).send("Email not verified."); } //verifica se o email está verificado
+        const emailVerificado = admin.auth().getUser(uid).then((userRecord => { return userRecord.emailVerified; })).catch(() => { return false; });
+
+        if (!emailVerificado) {
+            console.log("Email not verified. O e-mail do usuário não está verificado.");
+            return response.status(401).send("Email not verified.");
+        } //verifica se o email está verificado
 
         //verifica se o usuário possui permissão de gerenciador
         return firestore.collection('usuarios').doc(uid).get().then(docUser => {
-            if (!docUser.exists) { return response.status(401).send("Unauthorized."); }
+            if (!docUser.exists) {
+                console.log("Unauthorized. O usuário não está no banco de dados.");
+                return response.status(401).send("Unauthorized.");
+            }
 
             const xp = docUser.data().xp;
-            if (xp < xpGerenciador) { return response.status(401).send("Unauthorized."); } //caso o usuário não possuir permissão de gerenciador
+            if (xp < xpGerenciador) {
+                console.log("Unauthorized. O usuário não possui xp necessário para se tornar gerenciador.");
+                return response.status(401).send("Unauthorized.");
+            }
 
             //pega os objetos em andamento
             return andamentoRef.get().then(docs => {
 
                 //verifica se há objetos
-                if (docs.size == 0) { return response.status(200).send("There are no objects available.") }
+                if (docs.size == 0) {
+                    console.log("There are no objects avaiable. Não há objetos em andamento no momento.");
+                    return response.status(200).send("There are no objects available.")
+                }
 
                 //calcula quantos objetos será retornado
                 const retornarObjetos = docs.size >= 3 ? 3 : docs.size; //quantos objetos serão retornados, com o máximo de 3
@@ -800,79 +940,125 @@ exports.objetosAndamento = functions.https.onRequest((request, response) => { //
 
     }).catch(() => {
         //envia a response como erro (token inválido)
+        console.log("Unauthorized. O token é inválido.");
         return response.status(401).send("Unauthorized.");
     });
 
 });
 
-exports.aprovacaoObjeto = functions.https.onRequest((request, response) => { //função para aprovar ou desaprovar um objeto
+exports.aprovacaoObjeto = functions.https.onRequest(async(request, response) => { //função para aprovar ou desaprovar um objeto
     const token = request.body.token;
-    const idAndamento = request.body.token;
+    const idAndamento = request.body.idAndamento;
     const motivo = request.body.token;
-    const valoresAprovar = request.body.valoresAprovar; //valores recebidos caso o objeto tenha valores diferentes do original 
-    const status = request.body.status; //valor TRUE para objeto APROVADO e FALSE para DESAPROVADO
+    const valoresAprovar = request.body.valoresAprovar == "" || request.body.valoresAprovar == undefined ? '{}' : JSON.parse(request.body.valoresAprovar); //valores recebidos caso o objeto tenha valores diferentes do original 
+    const status = (request.body.status === 'true'); //valor TRUE para objeto APROVADO e FALSE para DESAPROVADO
+    console.log(status ? "Aprovando objeto " + idAndamento + "..." : "Desaprovando objeto " + idAndamento + "...");
 
     const reportRef = firestore.collection('andamento').doc(idAndamento);
 
     //caso o usuário não enviou token, status, o id andamento ou então o motivo (caso for desaprovado)
-    if (idAndamento == undefined || status == undefined || (status != true && status != false) || token == undefined || (motivo == undefined && !status)) { return response.status(400).send("Bad request."); }
 
+    if (idAndamento == undefined || status == undefined || idAndamento == "" || token == "" || (status != true && status != false) || token == undefined || (motivo == "" && !status)) {
+        console.log("Bad request. Um dos campos é inválido.");
+        return response.status(400).send("Bad request.");
+    }
     //verifica se o token é válido
-    admin.auth().verifyIdToken(token).then(decodedToken => {
+    return admin.auth().verifyIdToken(token).then(decodedToken => {
 
         const uid = decodedToken.uid;
         const email = decodedToken.email;
-        const emailVerificado = decodedToken.email_verified;
+        const emailVerificado = admin.auth().getUser(uid).then((userRecord => { return userRecord.emailVerified; })).catch(() => { return false; });
 
         //verifica se o usuário é gerenciador
         return firestore.collection('usuarios').doc(uid).get().then(docUser => {
-            if (!docUser.exists || !emailVerificado) { return response.status(401).send("Unauthorized."); } //caso o email não estiver verificado ou não existir
-            if (docUser.data().xp < xpGerenciador) { return response.status(401).send("Unauthorized."); } //caso não possuir permissão de gerenciador
+            if (!docUser.exists || docUser.data().xp < xpGerenciador) {
+                console.log("Unauthorized. O usuário não existe no banco de dados ou então não possui xp necessário para se tornar gerenciador");
+                return response.status(401).send("Unauthorized.");
+            }
+
+            if (!emailVerificado) {
+                console.log("Email not verified. O e-mail do usuário não está verificado.");
+                return response.status(400).send("Email not verified.");
+            }
 
             //pega o objeto em andamento do banco de dados
             return reportRef.get().then(docAndamento => {
-                if (!docAndamento.exists) { return response.status(404).send("Object not found!"); } //caso o id do objeto em andamento não exista
+                if (!docAndamento.exists) {
+                    console.log("Object not found. O objeto em andamento não foi encontrado.");
+                    return response.status(404).send("Object not found!");
+                } //caso o id do objeto em andamento não exista
 
                 const dadosObjetoAndamento = docAndamento.data();
                 const tipoObjetoAndamento = dadosObjetoAndamento.tipo;
                 const idObjetoAndamento = dadosObjetoAndamento.idObjeto;
                 const refObjeto = firestore.collection('objetos').doc(idObjetoAndamento);
 
-                return refObjeto.get().then(docObjeto => {
+                return refObjeto.get().then(async(docObjeto) => {
 
                     //verifica se o objeto existe
                     if (!docAndamento.exists) {
                         //caso não existir deleta o objeto em andamento e retorna erro
                         reportRef.delete();
+                        console.log("Object not found. O objeto original não foi encontrado.");
                         return response.status(404).send("Object not found!");
                     }
 
                     const dataObjeto = docObjeto.data();
-                    const lingua = dataObjeto._lingua;
+                    let lingua = dataObjeto._lingua;
+                    lingua = lingua == "pt" ? 1 : lingua == "es" ? 2 : 0;
 
                     //verifica se o objeto foi excluído (exclui o objeto em andamento e retorna erro)
-                    if (dataObjeto._aprovacao == "excluido") { response.status(404).send("The object has been deleted."); }
+                    if (dataObjeto._aprovacao == "excluido") {
+                        console.log("The object has been deleted. O objeto foi excluído.");
+                        return response.status(404).send("The object has been deleted.");
+                    }
+
+                    //caso possuir imagem faz upload
+                    if (valoresAprovar.imagem != undefined && valoresAprovar.imagem != "") {
+                        const bucket = storage.bucket("apptrimonio-9844d.appspot.com");
+                        const imageId = crypto.randomBytes(10).toString("base64").replace("/", "*");
+                        const file = bucket.file(refObjeto.id + "-" + imageId + ".jpg");
+                        const buffer = new Uint8Array(Buffer.from(valoresAprovar.imagem, "base64"));
+                        const options = { resumable: false, metadata: { contentType: "image/jpg" } };
+
+                        valoresAprovar.imagem = await file.save(buffer, options).then(() => {
+                            return file.getSignedUrl({ action: "read", expires: '03-09-2500' });
+                        }).then(urls => {
+                            const url = urls[0];
+                            console.log("URL: " + url);
+                            return url;
+                        }).catch(error => {
+                            console.log(error);
+                            console.log("Ocorreu um erro ao fazer upload da imagem.");
+                            return "";
+                        })
+                    }
 
                     //dados do objeto que podem ser editados caso necessário
                     const uidAdicionou = dataObjeto._adicionadoPorUID;
                     const emailAdicionou = dataObjeto._adicionadoPor;
                     const editores = dataObjeto._editores;
                     editores.push(email); //adiciona o usuário aos editores
-                    const imagem = valoresAprovar.imagem == undefined ? dataObjeto._imagem : valoresAprovar.imagem;
-                    const categoria = valoresAprovar.categoria == undefined ? dataObjeto.categoria : valoresAprovar.categoria;
-                    const compra = valoresAprovar.compra == undefined ? dataObjeto.compra : valoresAprovar.compra;
-                    const descricaoImagem = valoresAprovar.descricaoImagem == undefined ? dataObjeto.descricaoImagem : valoresAprovar.descricaoImagem;
-                    const local = valoresAprovar.local == undefined ? dataObjeto.local : valoresAprovar.local;
-                    const nome = valoresAprovar.nome == undefined ? dataObjeto.nome : valoresAprovar.nome;
-                    const valor = valoresAprovar.valor == undefined ? dataObjeto.valor : valoresAprovar.valor;
-                    const valorSentimental = valoresAprovar.valorSentimental == undefined ? dataObjeto.valorSentimental : valoresAprovar.valorSentimental;
-                    const descricao = valoresAprovar.descricao == undefined ? dataObjeto.descricao : valoresAprovar.descricao;
-
-                    const modificado = valoresAprovar.imagem != undefined || valoresAprovar.categoria != undefined || valoresAprovar.compra != undefined
-                        || valoresAprovar.descricaoImagem != undefined || valoresAprovar.local != undefined || valoresAprovar.nome != undefined
-                        || valoresAprovar.valor != undefined || valoresAprovar.valorSentimental != undefined ? true : false;
+                    const imagem = valoresAprovar.imagem == undefined || valoresAprovar.imagem == "" ? dataObjeto._imagem : valoresAprovar.imagem;
+                    const categoria = valoresAprovar.categoria == undefined || valoresAprovar.categoria == "" ? dataObjeto.categoria : valoresAprovar.categoria;
+                    const compra = valoresAprovar.compra == undefined || valoresAprovar.compra == 0 ? dataObjeto.compra : new Date(Number(valoresAprovar.compra));
+                    const descricaoImagem = valoresAprovar.descricaoImagem == undefined || valoresAprovar.descricaoImagem == "" ? dataObjeto.descricaoImagem : valoresAprovar.descricaoImagem;
+                    const local = valoresAprovar.local == undefined || valoresAprovar.local == "" ? dataObjeto.local : valoresAprovar.local;
+                    const nome = valoresAprovar.nome == undefined || valoresAprovar.nome == "" ? dataObjeto.nome : valoresAprovar.nome;
+                    console.log("valor " + valoresAprovar.valor);
+                    const valor = valoresAprovar.valor == undefined || valoresAprovar.valor == 0 ? dataObjeto.valor : valoresAprovar.valor;
+                    const valorSentimental = valoresAprovar.valorSentimental == undefined || valoresAprovar.valorSentimental == "" ? dataObjeto.valorSentimental : valoresAprovar.valorSentimental;
+                    const descricao = valoresAprovar.descricao == undefined || valoresAprovar.descricao == "" ? dataObjeto.descricao : valoresAprovar.descricao;
 
                     //caso for andamento de objeto adicionado (foi adicionado por um usuário sem gerenciador)
+
+                    let objeto2 = Object.assign({}, dataObjeto);
+                    objeto2.imagem = docObjeto.data()._imagem;
+                    objeto2.idObjeto = refObjeto.id;
+                    objeto2.idAndamento = idObjetoAndamento;
+                    //adiciona xp ao gerenciador
+                    adicionarXP({ uid: uid, acao: "verificar", objeto: objeto2, userEmail: email, lingua: objeto2.lingua, quantidade: xpAoAprovar });
+
                     if (tipoObjetoAndamento == "add") {
 
                         //remove o objeto em andamento
@@ -882,7 +1068,7 @@ exports.aprovacaoObjeto = functions.https.onRequest((request, response) => { //f
                         if (status) {
                             refObjeto.set({
                                 _aprovacao: "aprovado",
-                                _aprovadoEm: admin.database.ServerValue.TIMESTAMP,
+                                _aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
                                 _aprovadoPor: email,
                                 _aprovadoPorUID: uid,
                                 _editores: editores,
@@ -895,35 +1081,29 @@ exports.aprovacaoObjeto = functions.https.onRequest((request, response) => { //f
                                 valor: valor,
                                 descricao: descricao,
                                 valorSentimental: valorSentimental
-                            }, {merge: true});
+                            }, { merge: true });
 
                             //envia e-mail a quem criou (add aprovado)
-                            const titulo = modificado ? titulosAddAprovadoModificado[lingua] : titulosAddAprovado[lingua];
-                            enviarEmail({ email: emailAdicionou, objeto: { IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulo, assunto: assuntosAddAprovado[lingua], mensagem: mensagens1[lingua], lingua: lingua });
+                            adicionarXP({ uid: uidAdicionou, acao: "aprovado", objeto: objeto2, email: { titulo: titulosAddAprovado[lingua], assunto: assuntosAddAprovado[lingua], mensagem: mensagens1[lingua] }, userEmail: emailAdicionou, lingua: objeto2.lingua, quantidade: xpAoAdicionar });
                         } else {
                             refObjeto.set({
                                 _aprovacao: "desaprovado",
-                                _aprovadoEm: admin.database.ServerValue.TIMESTAMP,
+                                _aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
                                 _aprovadoPor: email,
                                 _aprovadoPorUID: uid,
                                 _editores: editores,
                                 status: motivo,
-                            }, {merge: true});
+                            }, { merge: true });
 
                             //envia e-mail a quem criou (add desaprovado)
-                            enviarEmail({ email: emailAdicionou, objeto: { DESCRICAO: descricao, IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosAddDesaprovado[lingua], assunto: assuntosAddDesaprovado[lingua], mensagem: mensagens2[lingua], lingua: lingua });
+                            adicionarXP({ uid: uidAdicionou, acao: "aprovado", objeto: objeto2, email: { titulo: titulosAddDesaprovado[lingua], assunto: titulosAddDesaprovado[lingua], mensagem: mensagens3[lingua] }, userEmail: emailAdicionou, lingua: objeto2.lingua, quantidade: -xpAoAdicionarF });
                         }
-
-                        //adiciona xp a quem aprovou e quem adicionou
-                        userAddXp({ uid: uid, idObjeto: idObjetoAndamento, status: true, acao: "aprovar" });
-                        userAddXp({ uid: uidAdicionou, idObjeto: idObjetoAndamento, status: status, acao: "adicionar" });
 
                         //retorna ok
                         return response.status(200).send("OK!");
                     } else if (tipoObjetoAndamento == "report") { //caso for report (algum usuário reportou)
-
-                        const quemReportouUID = dataObjeto._reportadoPorUID;
-                        const quemReportou = dataObjeto._reportadoPor;
+                        const quemReportouUID = docAndamento.data()._reportadoPorUID;
+                        const quemReportou = docAndamento.data()._reportadoPor;
 
                         //remove o objeto em andamento
                         reportRef.delete();
@@ -941,27 +1121,21 @@ exports.aprovacaoObjeto = functions.https.onRequest((request, response) => { //f
                                 nome: nome,
                                 valor: valor,
                                 valorSentimental: valorSentimental
-                            }, {merge: true});
+                            }, { merge: true });
 
                             //envia e-mail a quem reportou e a quem adicionou e foi modificado
-                            enviarEmail({ email: emailAdicionou, objeto: { DESCRICAO: descricao,IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosObjEditado[lingua], assunto: assuntosObjEditado[lingua], mensagem: mensagens3[lingua], lingua: lingua });
-                            enviarEmail({ email: quemReportou, objeto: { DESCRICAO: descricao,IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosReportModificado[lingua], assunto: assuntosReport[lingua], mensagem: mensagens4[lingua], lingua: lingua });
+                            adicionarXP({ uid: uidAdicionou, acao: "reportar", objeto: objeto2, email: { titulo: titulosObjEditado[lingua], assunto: assuntosObjEditado[lingua], mensagem: mensagens3[lingua] }, userEmail: emailAdicionou, lingua: objeto2.lingua, quantidade: 0 });
+                            adicionarXP({ uid: quemReportouUID, acao: "reportar", objeto: objeto2, email: { titulo: titulosReportModificado[lingua], assunto: assuntosReport[lingua], mensagem: mensagens4[lingua] }, userEmail: quemReportou, lingua: objeto2.lingua, quantidade: xpAoReportar });
                         } else {
                             //envia e-mail a quem reportou e não foi modificado
-                            enviarEmail({ email: quemReportou, objeto: { DESCRICAO: descricao,IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosReportDesaprovado[lingua], assunto: assuntosReport[lingua], mensagem: mensagens4[lingua], lingua: lingua });
+                            adicionarXP({ uid: quemReportouUID, acao: "reportar", objeto: objeto2, email: { titulo: titulosReportDesaprovado[lingua], assunto: assuntosReport[lingua], mensagem: mensagens4[lingua] }, userEmail: quemReportou, lingua: objeto2.lingua, quantidade: 0 });
                         }
-
-
-                        //adiciona XP ao gerenciador que aprovou e a quem reportou
-                        userAddXp({ uid: uid, idObjeto: idObjetoAndamento, status: true, acao: "aprovar" });
-                        userAddXp({ uid: quemReportouUID, idObjeto: idObjetoAndamento, status: true, acao: "reportar" });
 
                         //retorna ok
                         return response.status(200).send("OK!");
                     } else if (tipoObjetoAndamento == "edit") { //caso o objeto em andamento for edit (um usuário sem gerenciador editou)
-
-                        const quemEditou = dataObjeto._editadoPor;
-                        const quemEditouUID = dataObjeto._editadoPorUID;
+                        const quemEditou = docAndamento.data()._editadoPor;
+                        const quemEditouUID = docAndamento.data()._editadoPorUID;
 
                         //remove o objeto em andamento
                         reportRef.delete();
@@ -979,34 +1153,32 @@ exports.aprovacaoObjeto = functions.https.onRequest((request, response) => { //f
                                 valor: valor,
                                 descricao: descricao,
                                 valorSentimental: valorSentimental
-                            }, {merge: true});
+                            }, { merge: true });
 
                             //envia e-mail a quem editou e foi aprovado e a quem adicionou
-                            const titulo = modificado ? titulosEditAprovadaModificada[lingua] : titulosEditAprovada[lingua];
-                            enviarEmail({ email: emailAdicionou, objeto: { DESCRICAO: descricao,IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosObjEditado, assunto: assuntosObjEditado[lingua], mensagem: mensagens3[lingua], lingua: lingua });
-                            enviarEmail({ email: quemEditou, objeto: { DESCRICAO: descricao,IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulo, assunto: assuntosEditAprovada[lingua], mensagem: mensagens4[lingua], lingua: lingua });
+                            adicionarXP({ uid: quemEditouUID, acao: "editar", objeto: objeto2, email: { titulo: titulosEditAprovada[lingua], assunto: assuntosEditAprovada[lingua], mensagem: mensagens4[lingua] }, userEmail: quemEditou, lingua: objeto2.lingua, quantidade: xpAoEditar });
+                            adicionarXP({ uid: uidAdicionou, acao: "aprovado", objeto: objeto2, email: { titulo: titulosObjEditado[lingua], assunto: assuntosObjEditado[lingua], mensagem: mensagens3[lingua] }, userEmail: emailAdicionou, lingua: objeto2.lingua, quantidade: 0 });
                         } else {
 
                             //envia e-mail a quem editou e e não foi aprovado
-                            enviarEmail({ email: quemEditou, objeto: { DESCRICAO: descricao,IMAGEM: imagem, CATEGORIA: categoria, COMPRA: compra, DESCRICAOIMAGEM: descricaoImagem, LOCAL: local, VALOR: valor, VALORSENTIMENTAL: valorSentimental, NOME: nome }, titulo: titulosEditDesaprovada[lingua], assunto: assuntosEditDesaprovada[lingua], mensagem: mensagens4[lingua], lingua: lingua });
+                            adicionarXP({ uid: quemEditouUID, acao: "editar", objeto: objeto2, email: { titulo: titulosEditDesaprovada[lingua], assunto: assuntosEditDesaprovada[lingua], mensagem: mensagens4[lingua] }, userEmail: quemEditou, lingua: objeto2.lingua, quantidade: -xpAoEditarF });
                         }
 
-                        //adiciona xp a quem editou e ao gerenciador que aprovou
-                        userAddXp({ uid: uid, idObjeto: idObjetoAndamento, status: true, acao: "aprovar" });
-                        userAddXp({ uid: quemEditouUID, idObjeto: idObjetoAndamento, status: status, acao: "edicao" });
-
                         //retorna ok
-                        response.status(200).send("OK!");
+                        return response.status(200).send("OK!");
                     }
 
                     //caso não retornar valor dos IFs é por que tem algo errado
+                    console.log("Ocorreu um erro inesperado.");
                     return response.status(500).send("An error occured!");
                 });
             });
         });
 
-    }).catch(() => {
+    }).catch(error => {
         //envia a response como erro (token inválido)
+        console.log("Unauthorized. O token é inválido.");
+        console.log(error);
         return response.status(401).send("Unauthorized.");
     });
 });
@@ -1019,7 +1191,10 @@ exports.reportarObjeto = functions.https.onRequest((request, response) => { //fu
     const motivo = request.body.motivo;
 
     //caso o usuário não enviar o token, o id do objeto e o motivo do report
-    if (token == undefined || idObjeto == undefined || motivo == undefined) { return response.status(404).send("Bad request."); }
+    if (token == undefined || idObjeto == undefined || motivo == undefined) {
+        console.log("Bad request. O token, idObjeto ou motivo é inválido.");
+        return response.status(404).send("Bad request.");
+    }
 
     //verifica se o token é válido
     return admin.auth().verifyIdToken(token).then(decodedToken => {
@@ -1030,7 +1205,10 @@ exports.reportarObjeto = functions.https.onRequest((request, response) => { //fu
         const email = decodedToken.email;
 
         //verifica se o email do usuário é verificado
-        if (!emailVerificado) { return response.status(401).send("Email not verified."); }
+        if (!emailVerificado) {
+            console.log("Email not verified. O e-mail do usuário não está verificado.");
+            return response.status(401).send("Email not verified.");
+        }
 
         const objetoRef = firestore.collection('objetos').doc(idObjeto);
         const reportRef = firestore.collection('andamento');
@@ -1038,6 +1216,7 @@ exports.reportarObjeto = functions.https.onRequest((request, response) => { //fu
         //pega as informações do objeto
         return objetoRef.get().then(doc => {
             if (!doc.exists) { //verifica se o objeto existe
+                console.log("Object not found! O objeto não foi encontrado.");
                 return response.status(404).send("Object not found!");
             }
 
@@ -1055,15 +1234,19 @@ exports.reportarObjeto = functions.https.onRequest((request, response) => { //fu
                 idObjeto: idObjeto,
                 motivo: motivo,
                 tipo: 'report',
-                id: reportDocRef.id
+                idAndamento: reportDocRef.id
+            }).then(() => {
+                return response.status(200).send("OK!");
+            }).catch(error => {
+                console.log(error);
+                console.log("An error occurred. Ocorreu um erro ao criar o objeto.");
+                return response.status(500).send("An error occurred.");
             });
-
-            //retorna OK ao usuário
-            return response.status(200).send("OK!");
         });
 
     }).catch(() => {
         //envia a response como erro (token inválido)
+        console.log("Unauthorized. O token é inválido.");
         return response.status(401).send("Unauthorized.");
     });
 });
