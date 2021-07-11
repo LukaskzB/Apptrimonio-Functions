@@ -279,7 +279,7 @@ async function enviarEmail(dados) { //método que envia um e-mail ao usuário, p
 //envia o e-mail de confirmação do apptrimônio
 exports.enviarEmailConfirmacao = functions.https.onRequest((request, response) => { //quando o usuário deseja confirmar o e-mail
 
-    //dados do usuário
+    // dados do usuário
     const token = request.body.token;
     let lingua = request.body.lingua;
 
